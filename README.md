@@ -1,0 +1,1 @@
+# unnecessary-exclusions-maven-plugin
