@@ -18,6 +18,4 @@ jobs:
         java-version: ${{ matrix.java }}
         distribution: adopt
     - name: Test with Maven
-      run: mvn -B --file pom.xml test
-    - name: Verify with Maven
-      run: mvn -B -f pom.xml verify
+      run: mvn -B -X clean install verify
