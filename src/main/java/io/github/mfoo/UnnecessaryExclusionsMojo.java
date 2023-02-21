@@ -1,5 +1,6 @@
 package io.github.mfoo;
 
+import java.util.ArrayList;
 import java.util.List;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugins.annotations.Component;
@@ -50,62 +51,79 @@ public class UnnecessaryExclusionsMojo extends AbstractMojo {
     @Parameter(defaultValue = "${project.remoteProjectRepositories}", readonly = true)
     private List<RemoteRepository> remoteRepos;
 
+    /**
+     * Used to filter for classes that will be on the classpath at runtime. We don't need test-scoped dependencies,
+     * those aren't inherited between projects.
+     */
+    private static final DependencyFilter CLASSPATH_FILTER =
+            DependencyFilterUtils.classpathFilter(JavaScopes.COMPILE, JavaScopes.RUNTIME);
+
     private static boolean dependencyMatches(String artifactId, String groupId, Artifact transitiveDependency) {
         return (artifactId.equals("*") || transitiveDependency.getArtifactId().equals(artifactId))
                 && (groupId.equals("*") || transitiveDependency.getGroupId().equals(groupId));
     }
 
+    /**
+     * Iterate over the dependencies for the project fetching their exclusions list and transitive dependencies. If the dependency has any exclusions that aren't a dependency of
+     * that dependency, log a warning.
+     */
     @Override
     public void execute() {
-        // Iterate over dependencies, checking if any have exclusions
-        project.getDependencies().forEach(dependency -> {
-            try {
-                if (dependency.getExclusions().isEmpty()) {
-                    return;
-                }
+        project.getDependencies().stream()
+                .filter(d -> !d.getExclusions().isEmpty())
+                .forEach(dependency -> {
+                    List<ArtifactResult> artifactResults = getDependencies(dependency);
 
-                List<ArtifactResult> artifactResults = getDependenciesIncludingTransitive(dependency);
+                    dependency.getExclusions().forEach(dependencyExclusion -> {
+                        String artifactId = dependencyExclusion.getArtifactId();
+                        String groupId = dependencyExclusion.getGroupId();
 
-                // For each exclusion, iterate over the transitive dependencies. If none match the exclusion, shout
-                dependency.getExclusions().forEach(dependencyExclusion -> {
-                    String artifactId = dependencyExclusion.getArtifactId();
-                    String groupId = dependencyExclusion.getGroupId();
+                        boolean noneMatched = artifactResults.stream()
+                                .noneMatch(transitiveDependency ->
+                                        dependencyMatches(artifactId, groupId, transitiveDependency.getArtifact()));
 
-                    boolean noneMatched = artifactResults.stream()
-                            .noneMatch(transitiveDependency ->
-                                    dependencyMatches(artifactId, groupId, transitiveDependency.getArtifact()));
-
-                    if (noneMatched) {
-                        getLog().warn(String.format(
-                                "Dependency %s:%s excludes %s:%s unnecessarily",
-                                dependency.getGroupId(), dependency.getArtifactId(), groupId, artifactId));
-                    }
+                        if (noneMatched) {
+                            getLog().warn(String.format(
+                                    "Dependency %s:%s excludes %s:%s unnecessarily",
+                                    dependency.getGroupId(), dependency.getArtifactId(), groupId, artifactId));
+                        }
+                    });
                 });
-            } catch (DependencyResolutionException e) {
-                throw new RuntimeException(e);
-            }
-        });
     }
 
-    private List<ArtifactResult> getDependenciesIncludingTransitive(org.apache.maven.model.Dependency projectDependency)
-            throws DependencyResolutionException {
+    /**
+     * Use the Maven project/dependency APIs to fetch the list of dependencies for this dependency. This will make API
+     * calls to the configured repositories.
+     */
+    private List<ArtifactResult> getDependencies(org.apache.maven.model.Dependency projectDependency) {
+
+        List<ArtifactResult> results = new ArrayList<>();
+
         CollectRequest collectRequest = new CollectRequest();
         collectRequest.setRoot(new Dependency(
-                new DefaultArtifact(String.format(
-                        "%s:%s:%s:%s",
+                new DefaultArtifact(
                         projectDependency.getGroupId(),
                         projectDependency.getArtifactId(),
-                        projectDependency.getClassifier(),
-                        projectDependency.getVersion())),
+                        "pom",
+                        projectDependency.getVersion()),
                 projectDependency.getScope()));
 
         for (RemoteRepository remoteRepo : remoteRepos) {
             collectRequest.addRepository(remoteRepo);
         }
-        DependencyFilter classpathFilter =
-                DependencyFilterUtils.classpathFilter(JavaScopes.COMPILE, JavaScopes.RUNTIME, JavaScopes.TEST);
-        DependencyRequest dependencyRequest = new DependencyRequest(collectRequest, classpathFilter);
 
-        return repoSystem.resolveDependencies(repoSession, dependencyRequest).getArtifactResults();
+        DependencyRequest dependencyRequest = new DependencyRequest(collectRequest, CLASSPATH_FILTER);
+
+        try {
+            results.addAll(repoSystem
+                    .resolveDependencies(repoSession, dependencyRequest)
+                    .getArtifactResults());
+        } catch (DependencyResolutionException e) {
+            getLog().error(String.format(
+                    "Could not fetch details for %s:%s",
+                    projectDependency.getGroupId(), projectDependency.getArtifactId()));
+        }
+
+        return results;
     }
 }
