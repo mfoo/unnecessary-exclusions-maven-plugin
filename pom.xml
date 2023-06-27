@@ -97,7 +97,7 @@
 		<dependency>
 			<groupId>org.apache.maven.resolver</groupId>
 			<artifactId>maven-resolver-util</artifactId>
-			<version>1.9.12</version>
+			<version>1.9.13</version>
 			<scope>provided</scope>
 		</dependency>
 		<dependency>
