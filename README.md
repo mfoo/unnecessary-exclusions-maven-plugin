@@ -8,7 +8,7 @@
 This Maven plugin identifies dependency exclusions that can be removed without affecting your build. It is designed to
 help keep your project's pom files clean and is especially useful in refactoring projects.
 
-The plugin requires JDK 11+.
+The plugin requires JDK 17+.
 
 ## Example
 Imagine that my team's project depends on another team's project, but that team's project has a non-test-scoped JUnit dependency. I might have this in my pom:
